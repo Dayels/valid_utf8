@@ -191,7 +191,7 @@ mod test_core {
             info!("try valide {}", c);
             info!("his code {:#b}", c as u32);
             let r = validate_next(&mut it).unwrap();
-            info!("val code {:#b}", c as u32);
+            info!("val code {:#b}", r as u32);
             let r = unsafe { char::from_u32_unchecked(r) };
             assert_eq!(c, r);
         }
@@ -207,7 +207,7 @@ mod test_core {
             info!("try valide {}", c);
             info!("his code {:#b}", c as u32);
             let r = validate_next(&mut it).unwrap();
-            info!("val code {:#b}", c as u32);
+            info!("val code {:#b}", r as u32);
             let r = unsafe { char::from_u32_unchecked(r) };
             assert_eq!(c, r);
         }
@@ -223,7 +223,7 @@ mod test_core {
             info!("try valide {}", c);
             info!("his code {:#b}", c as u32);
             let r = validate_next(&mut it).unwrap();
-            info!("val code {:#b}", c as u32);
+            info!("val code {:#b}", r as u32);
             let r = unsafe { char::from_u32_unchecked(r) };
             assert_eq!(c, r);
         }
@@ -239,7 +239,7 @@ mod test_core {
             info!("try valide {}", c);
             info!("his code {:#b}", c as u32);
             let r = validate_next(&mut it).unwrap();
-            info!("val code {:#b}", c as u32);
+            info!("val code {:#b}", r as u32);
             let r = unsafe { char::from_u32_unchecked(r) };
             assert_eq!(c, r);
         }
