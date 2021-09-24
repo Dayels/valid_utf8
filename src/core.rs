@@ -55,10 +55,8 @@ fn is_overlong_sequence(cp: u32, length: SeqLen) -> bool {
         if length != SeqLen::Two {
             return true;
         }
-    } else if cp < 0x10000 {
-        if length != SeqLen::Three {
-            return true;
-        }
+    } else if cp < 0x10000 && length != SeqLen::Three {
+        return true;
     }
     false
 }
@@ -111,7 +109,7 @@ where
     let code_point = get_sequence_1(it)?;
     let code_point = get_next_byte(it)
         .and_then(is_trail)
-        .and_then(|byte| Ok(((code_point << 6) & 0x7ff) + ((byte & 0x3f) as u32)))?;
+        .map(|byte| ((code_point << 6) & 0x7ff) + ((byte & 0x3f) as u32))?;
     Ok(code_point)
 }
 
@@ -124,10 +122,10 @@ where
     let code_point = get_sequence_1(it)?;
     let code_point = get_next_byte(it)
         .and_then(is_trail)
-        .and_then(|byte| Ok(((code_point << 12) & 0xffff) + (((byte as u32) << 6) & 0xfff)))?;
+        .map(|byte| ((code_point << 12) & 0xffff) + (((byte as u32) << 6) & 0xfff))?;
     let code_point = get_next_byte(it)
         .and_then(is_trail)
-        .and_then(|byte| Ok(code_point + ((byte & 0x3f) as u32)))?;
+        .map(|byte| code_point + ((byte & 0x3f) as u32))?;
     Ok(code_point)
 }
 
@@ -140,13 +138,13 @@ where
     let code_point = get_sequence_1(it)?;
     let code_point = get_next_byte(it)
         .and_then(is_trail)
-        .and_then(|byte| Ok(((code_point << 18) & 0x1fffff) + (((byte as u32) << 12) & 0x3ffff)))?;
+        .map(|byte| ((code_point << 18) & 0x1fffff) + (((byte as u32) << 12) & 0x3ffff))?;
     let code_point = get_next_byte(it)
         .and_then(is_trail)
-        .and_then(|byte| Ok(code_point + (((byte as u32) << 6) & 0xfff)))?;
+        .map(|byte| code_point + (((byte as u32) << 6) & 0xfff))?;
     let code_point = get_next_byte(it)
         .and_then(is_trail)
-        .and_then(|byte| Ok(code_point + (((byte) & 0x3f) as u32)))?;
+        .map(|byte| code_point + (((byte) & 0x3f) as u32))?;
     Ok(code_point)
 }
 
@@ -159,7 +157,7 @@ where
     let mut it = it.peekable();
     let lead = it.peek().map(|v| (*v).as_byte());
     let length = sequence_length(lead)?;
-    let code_point = match length {
+    match length {
         SeqLen::One => get_sequence_1(&mut it),
         SeqLen::Two => get_sequence_2(&mut it),
         SeqLen::Three => get_sequence_3(&mut it),
@@ -175,8 +173,7 @@ where
         } else {
             Err(UtfError::InvalidCodePoint)
         }
-    });
-    code_point
+    })
 }
 
 pub trait AsByte<T>: Copy {
@@ -197,6 +194,8 @@ impl AsByte<&u8> for &u8 {
 
 #[cfg(test)]
 mod test_core {
+    use std::io::Read;
+
     use log::info;
 
     use super::*;
@@ -230,6 +229,24 @@ mod test_core {
         init_logger();
         let input = "qwerty";
         let mut it = input.as_bytes().iter();
+        for c in input.chars() {
+            info!("try valide {}", c);
+            info!("his code {:#b}", c as u32);
+            let r = validate_next(&mut it).unwrap();
+            info!("val code {:#b}", r as u32);
+            let r = unsafe { char::from_u32_unchecked(r) };
+            assert_eq!(c, r);
+        }
+        assert!(validate_next(&mut it).is_err())
+    }
+
+    #[test]
+    fn test_as_byte_from_reader() {
+        init_logger();
+        let input = "qwerty";
+        let mut it = std::io::Cursor::new(input)
+            .bytes()
+            .map(|r| r.expect("Can'n read from reader"));
         for c in input.chars() {
             info!("try valide {}", c);
             info!("his code {:#b}", c as u32);
