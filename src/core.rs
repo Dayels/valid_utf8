@@ -1,29 +1,17 @@
-const LEAD_SURROGATE_MIN: u16 = 0xd800;
-const TRAIL_SURROGATE_MAX: u16 = 0xdfff;
+use crate::UtfError;
+
+const LEAD_SURROGATE_MIN: u32 = 0xd800;
+const TRAIL_SURROGATE_MAX: u32 = 0xdfff;
 const CODE_POINT_MAX: u32 = 0x0010ffff;
 
-macro_rules! mask8 {
-    ($oc:expr) => {
-        (0xff & $oc) as u8
-    };
+#[inline]
+const fn is_surrogate(cp: u32) -> bool {
+    cp >= LEAD_SURROGATE_MIN && cp <= TRAIL_SURROGATE_MAX
 }
 
-macro_rules! is_trail {
-    ($oc:expr) => {
-        (mask8!($oc) >> 6) == 0x2
-    };
-}
-
-macro_rules! is_surrogate {
-    ($cp:expr) => {{
-        ($cp >= LEAD_SURROGATE_MIN && $cp <= TRAIL_SURROGATE_MAX)
-    }};
-}
-
-macro_rules! is_code_point_valid {
-    ($cp:expr) => {{
-        ($cp <= CODE_POINT_MAX && !is_surrogate!($cp as u16))
-    }};
+#[inline]
+const fn is_code_point_valid(cp: u32) -> bool {
+    cp <= CODE_POINT_MAX && !is_surrogate(cp)
 }
 
 #[derive(PartialEq)]
@@ -35,13 +23,13 @@ enum SeqLen {
 }
 
 #[inline]
-fn sequence_length(lead_byte: Option<u8>) -> Result<SeqLen, UtfError> {
+fn sequence_length(lead_byte: u8) -> Result<SeqLen, UtfError> {
     match lead_byte {
-        Some(b) if b < 0x80 => Ok(SeqLen::One),
-        Some(b) if (b >> 5) == 0x6 => Ok(SeqLen::Two),
-        Some(b) if (b >> 4) == 0xe => Ok(SeqLen::Three),
-        Some(b) if (b >> 3) == 0x1e => Ok(SeqLen::Four),
-        _ => Err(UtfError::InvalidLead),
+        b if b < 0x80 => Ok(SeqLen::One),
+        b if (b >> 5) == 0x6 => Ok(SeqLen::Two),
+        b if (b >> 4) == 0xe => Ok(SeqLen::Three),
+        b if (b >> 3) == 0x1e => Ok(SeqLen::Four),
+        _ => Err(UtfError::InvalidLead(lead_byte)),
     }
 }
 
@@ -61,16 +49,6 @@ fn is_overlong_sequence(cp: u32, length: SeqLen) -> bool {
     false
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum UtfError {
-    EmptyInput,
-    NotEnoughRoom,
-    InvalidLead,
-    IncompleteSequence,
-    OverlongSequence,
-    InvalidCodePoint,
-}
-
 #[inline]
 fn get_next_byte<I, U>(it: &mut I) -> Result<u8, UtfError>
 where
@@ -83,11 +61,16 @@ where
 }
 
 #[inline]
-fn is_trail(byte: u8) -> Result<u8, UtfError> {
-    if is_trail!(byte) {
+const fn is_trail_b(byte: u8) -> bool {
+    (byte >> 6) == 0x2
+}
+
+#[inline]
+const fn is_trail(byte: u8, cp: u32) -> Result<u8, UtfError> {
+    if is_trail_b(byte) {
         Ok(byte)
     } else {
-        Err(UtfError::IncompleteSequence)
+        Err(UtfError::IncompleteSequence(cp))
     }
 }
 
@@ -108,7 +91,7 @@ where
 {
     let code_point = get_sequence_1(it)?;
     let code_point = get_next_byte(it)
-        .and_then(is_trail)
+        .and_then(|b| is_trail(b, code_point))
         .map(|byte| ((code_point << 6) & 0x7ff) + ((byte & 0x3f) as u32))?;
     Ok(code_point)
 }
@@ -121,10 +104,10 @@ where
 {
     let code_point = get_sequence_1(it)?;
     let code_point = get_next_byte(it)
-        .and_then(is_trail)
+        .and_then(|b| is_trail(b, code_point))
         .map(|byte| ((code_point << 12) & 0xffff) + (((byte as u32) << 6) & 0xfff))?;
     let code_point = get_next_byte(it)
-        .and_then(is_trail)
+        .and_then(|b| is_trail(b, code_point))
         .map(|byte| code_point + ((byte & 0x3f) as u32))?;
     Ok(code_point)
 }
@@ -137,13 +120,13 @@ where
 {
     let code_point = get_sequence_1(it)?;
     let code_point = get_next_byte(it)
-        .and_then(is_trail)
+        .and_then(|b| is_trail(b, code_point))
         .map(|byte| ((code_point << 18) & 0x1fffff) + (((byte as u32) << 12) & 0x3ffff))?;
     let code_point = get_next_byte(it)
-        .and_then(is_trail)
+        .and_then(|b| is_trail(b, code_point))
         .map(|byte| code_point + (((byte as u32) << 6) & 0xfff))?;
     let code_point = get_next_byte(it)
-        .and_then(is_trail)
+        .and_then(|b| is_trail(b, code_point))
         .map(|byte| code_point + (((byte) & 0x3f) as u32))?;
     Ok(code_point)
 }
@@ -155,7 +138,10 @@ where
     <I as Iterator>::Item: AsByte<U>,
 {
     let mut it = it.peekable();
-    let lead = it.peek().map(|v| (*v).as_byte());
+    let lead = it
+        .peek()
+        .map(|v| (*v).as_byte())
+        .ok_or(UtfError::NotEnoughRoom)?;
     let length = sequence_length(lead)?;
     match length {
         SeqLen::One => get_sequence_1(&mut it),
@@ -164,14 +150,14 @@ where
         SeqLen::Four => get_sequence_4(&mut it),
     }
     .and_then(|code_point| {
-        if is_code_point_valid!(code_point) {
+        if is_code_point_valid(code_point) {
             if !is_overlong_sequence(code_point, length) {
                 Ok(code_point)
             } else {
-                Err(UtfError::OverlongSequence)
+                Err(UtfError::OverlongSequence(code_point))
             }
         } else {
-            Err(UtfError::InvalidCodePoint)
+            Err(UtfError::InvalidCodePoint(code_point))
         }
     })
 }
